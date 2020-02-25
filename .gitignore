@@ -2,3 +2,6 @@ advertorch/
 cifar_train_architecture_check_models/
 cifar_train_functionality_check_models/
 
+__pycache__/
+core/__pycache__/
+compensated_attacks/__pycache__/
