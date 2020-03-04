@@ -1,10 +1,3 @@
-# Copyright (c) 2018-present, Royal Bank of Canada.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-#
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -26,6 +19,9 @@ from advertorch.attacks.base import LabelMixin
 # Baseline attacks implemented at advertorch
 from advertorch.attacks import FGSM as FGSM_base
 from advertorch.attacks import FGM  as FGM_base
+
+# R-FGSM and R-FGM implemented using basic attack class and operations provided by AdverTorch
+# FGSM and FGM modified for logit rescaling option
 
 class RandomGradientSignAttack(Attack, LabelMixin):
 

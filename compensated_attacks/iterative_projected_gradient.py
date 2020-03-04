@@ -1,10 +1,3 @@
-# Copyright (c) 2018-present, Royal Bank of Canada.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-#
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -32,6 +25,9 @@ from advertorch.attacks.utils import rand_init_delta
 from initialization_method import *
 
 from advertorch.attacks import PGDAttack as PGD_base
+
+# perturb_iterative modified for logit rescaling option; otherwise same as the original function in AdverTorch
+# PGD modified for different *initialization* methods (PGD + Eigen and PGD + BFGS)
 
 def perturb_iterative(xvar, yvar, predict, nb_iter, eps, eps_iter, loss_fn,
                       delta_init=None, minimize=False, ord=np.inf,
