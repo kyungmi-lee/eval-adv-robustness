@@ -9,6 +9,7 @@ import torch.nn as nn
 
 import sys
 sys.path.insert(0, './advertorch')
+sys.path.insert(0, './compensated_attacks')
 
 from advertorch.utils import clamp
 from advertorch.utils import normalize_by_pnorm
@@ -23,6 +24,7 @@ from advertorch.attacks.base import LabelMixin
 from advertorch.attacks.utils import rand_init_delta
 
 from initialization_method import *
+from utils import *
 
 from advertorch.attacks import PGDAttack as PGD_base
 
@@ -70,17 +72,31 @@ def perturb_iterative(xvar, yvar, predict, nb_iter, eps, eps_iter, loss_fn,
         loss.backward()
         if ord == np.inf:
             grad_sign = delta.grad.data.sign()
-            delta.data = delta.data + batch_multiply(eps_iter, grad_sign)
-            delta.data = batch_clamp(eps, delta.data)
-            delta.data = clamp(xvar.data + delta.data, clip_min, clip_max
-                               ) - xvar.data
+            if isinstance(eps_iter, float):
+                delta.data = delta.data + batch_multiply(eps_iter, grad_sign)
+            else:
+                delta.data = delta.data + channel_eps_multiply(grad_sign, eps_iter)
+                
+            if isinstance(eps, float):
+                delta.data = batch_clamp(eps, delta.data)
+            else:
+                delta.data = channel_eps_clip(delta.data, eps)
+                
+            if isinstance(clip_min, float):
+                delta.data = clamp(xvar.data + delta.data, clip_min, clip_max
+                                   ) - xvar.data
+            else:
+                delta.data = channel_clip(xvar.data + delta.data, clip_min, clip_max) - xvar.data
 
         elif ord == 2:
             grad = delta.grad.data
             grad = normalize_by_pnorm(grad)
             delta.data = delta.data + batch_multiply(eps_iter, grad)
-            delta.data = clamp(xvar.data + delta.data, clip_min, clip_max
-                               ) - xvar.data
+            if isinstance(clip_min, float):
+                delta.data = clamp(xvar.data + delta.data, clip_min, clip_max
+                                   ) - xvar.data
+            else:
+                delta.data = channel_clip(xvar.data + delta.data, clip_min, clip_max) - xvar.data
             if eps is not None:
                 delta.data = clamp_by_pnorm(delta.data, ord, eps)
         else:
@@ -89,7 +105,12 @@ def perturb_iterative(xvar, yvar, predict, nb_iter, eps, eps_iter, loss_fn,
 
         delta.grad.data.zero_()
 
-    x_adv = clamp(xvar + delta, clip_min, clip_max)
+    if isinstance(clip_min, float):
+        x_adv = clamp(xvar + delta, clip_min, clip_max)
+    else:
+        x_adv = channel_clip(xvar + delta, clip_min, clip_max)
+        
+    # print(torch.norm(delta.data.view(delta.shape[0], -1), p=2, dim=1)[0])
     return x_adv
 
 
@@ -114,6 +135,16 @@ class PGDAttack(PGD_base):
         :param ord: norm type of the norm constraints
         :param targeted: if the attack is targeted
         """
+        if ord == np.inf:
+            if isinstance(eps, list):
+                eps = torch.Tensor(eps)
+            if isinstance(eps_iter, list):
+                eps_iter = torch.Tensor(eps_iter)
+            
+        if ord == 2 and isinstance(eps, list) and isinstance(eps_iter, list):
+            eps = (eps[0] + eps[1] + eps[2]) / 3.
+            eps_iter = (eps_iter[0] + eps_iter[1] + eps_iter[2]) / 3.
+            
         super(PGDAttack, self).__init__(
             predict, loss_fn, eps, nb_iter, eps_iter, rand_init, clip_min, clip_max, \
             ord, targeted)
@@ -138,8 +169,18 @@ class PGDAttack(PGD_base):
         if self.rand_init:
             if self.init_method == 'rand':
                 delta = nn.Parameter(delta)
-                rand_init_delta(
-                    delta, x, self.ord, self.eps, self.clip_min, self.clip_max)
+                if isinstance(self.eps, float):
+                    if isinstance(self.clip_min, float):
+                        rand_init_delta(
+                            delta, x, self.ord, self.eps, self.clip_min, self.clip_max)
+                    elif self.ord == 2:
+                        rand_init_delta(
+                            delta, x, self.ord, self.eps, max(self.clip_min), min(self.clip_max))
+                else:
+                    # Only support Linf as of now
+                    delta.data.uniform_(-1, 1)
+                    delta.data = channel_eps_multiply(delta.data, self.eps)
+                    
             elif self.init_method == 'miyato':
                 delta = miyato_second_order(x.clone(), y.clone(), self.predict, self.eps, self.loss_fn, delta=self.eps, \
                                             clip_min=self.clip_min, clip_max=self.clip_max, targeted=self.targeted, norm=self.ord)
@@ -148,8 +189,12 @@ class PGDAttack(PGD_base):
                 delta = bfgs_direction(x.clone(), y.clone(), self.predict, self.eps, self.loss_fn, \
                                        clip_min=self.clip_min, clip_max=self.clip_max, targeted=self.targeted, norm=self.ord)
                 delta = nn.Parameter(delta)
-            delta.data = clamp(
-                x + delta.data, min=self.clip_min, max=self.clip_max) - x
+                
+            if isinstance(self.clip_min, float):
+                delta.data = clamp(
+                    x + delta.data, min=self.clip_min, max=self.clip_max) - x
+            else:
+                delta.data = channel_clip(x + delta.data, self.clip_min, self.clip_max) - x
         else:
             delta = nn.Parameter(delta)
 

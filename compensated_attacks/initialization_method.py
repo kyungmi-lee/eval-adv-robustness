@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from utils import *
 
 def bfgs_direction(xvar, yvar, predict, eps_iter, loss_fn, clip_min=0.0, clip_max=1.0, targeted=False, norm=2):
    
@@ -59,7 +60,10 @@ def bfgs_direction(xvar, yvar, predict, eps_iter, loss_fn, clip_min=0.0, clip_ma
 def miyato_second_order(xvar, yvar, predict, eps, loss_fn, delta=0.5, clip_min=0.0, clip_max=1.0, targeted=False, norm=2):
     rand_vector = torch.randn_like(xvar)
     rand_vector /= torch.norm(rand_vector.view(xvar.size(0), -1), dim=1, p=2).view(xvar.size(0), 1, 1, 1).expand_as(xvar)
-    rand_vector *= delta
+    if isinstance(delta, float):
+        rand_vector *= delta
+    else:
+        rand_vector = channel_eps_multiply(rand_vector, delta)
     
     x = xvar.clone().detach().requires_grad_()
     output = predict(x)
@@ -69,7 +73,10 @@ def miyato_second_order(xvar, yvar, predict, eps, loss_fn, delta=0.5, clip_min=0
     loss.backward()
     grad = x.grad.detach().data
     
-    rand_vector = torch.clamp(rand_vector+xvar, min=clip_min, max=clip_max) - rand_vector
+    if isinstance(clip_min, float):
+        rand_vector = torch.clamp(rand_vector+xvar, min=clip_min, max=clip_max) - rand_vector
+    else:
+        rand_vector = channel_clip(rand_vector+xvar, clip_min, clip_max) - rand_vector
     rand_vector = nn.Parameter(rand_vector)
     rand_vector = rand_vector.requires_grad_()
     output = predict(xvar.clone()+rand_vector)
@@ -81,13 +88,17 @@ def miyato_second_order(xvar, yvar, predict, eps, loss_fn, delta=0.5, clip_min=0
     
     hd = grad_rand - grad
     hd /= torch.norm(hd.view(xvar.size(0), -1), dim=1, p=2).view(xvar.size(0), 1, 1, 1).expand_as(grad)
+    # print(torch.max(hd), torch.min(hd))
     if norm == np.inf:
         # https://arxiv.org/pdf/1805.12514.pdf 
         # e_2 = sqrt(d/pi) * e_inf
         eps_equiv = np.sqrt(xvar.size(1)*xvar.size(2)*xvar.size(3)/3.14) * eps
-        init = eps_equiv * hd
-        # Trim by limiting to the linf-norm box
-        init = torch.clamp(init, min=-eps, max=eps)
+        if isinstance(eps, float):
+            init = eps_equiv * hd
+            init = torch.clamp(init, min=-eps, max=eps)
+        else:
+            init = channel_eps_multiply(hd, eps_equiv)
+            init = channel_eps_clip(init, eps)
         return init
     else:
         return eps * hd

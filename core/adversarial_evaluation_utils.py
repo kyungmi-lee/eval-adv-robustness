@@ -10,6 +10,7 @@ from torchvision import datasets, transforms
 import sys
 sys.path.insert(0, './compensated_attacks')
 sys.path.insert(0, './core')
+sys.path.insert(0, './places365_pretrained')
 
 from one_step_gradient import FGSM, FGM, RFGSM, RFGM
 from iterative_projected_gradient import LinfPGDAttack, L2PGDAttack
@@ -17,6 +18,7 @@ from iterative_projected_gradient import LinfPGDAttack, L2PGDAttack
 # Model classes for bpda substitute models
 from bpda_models import *
 from tinyimagenet_bpda_models import *
+from places365_bpda_models import *
 
 # Python program to print 
 # colored text and background 
@@ -85,6 +87,23 @@ def fetch_bpda_submodel(model, adversary, relu_replace='softplus', relu_replace_
                                          relu_replace, relu_replace_slope_param, relu_replace_threshold, max_pool_replace_param)
         else:
             raise TypeError('Only supports model types: VGG and WRN-50')
+            
+    elif dataset == 'places365':
+        if model_type == 'resnet18':
+            sub_model = bpda_wrapped_places365_resnet18(model, relu_replace=relu_replace, \
+                                                        relu_replace_slope_param=relu_replace_slope_param,\
+                                                        relu_replace_threshold=relu_replace_threshold)
+        elif model_type == 'resnet50':
+            sub_model = bpda_wrapped_places365_resnet50(model, relu_replace=relu_replace, \
+                                                        relu_replace_slope_param=relu_replace_slope_param,\
+                                                        relu_replace_threshold=relu_replace_threshold)
+        elif model_type == 'alexnet':
+            sub_model = bpda_wrapped_places365_alexnet(model, relu_replace=relu_replace, \
+                                                        relu_replace_slope_param=relu_replace_slope_param,\
+                                                        relu_replace_threshold=relu_replace_threshold,\
+                                                        maxpool_sub_p=max_pool_replace_param)
+        else:
+            raise TypeError('Only supports ResNet-18, ResNet-50, and AlexNet (pretrained)')
     
     sub_model.eval()
     sub_adversary = copy.deepcopy(adversary)
@@ -182,6 +201,8 @@ def evaluate_all(model, loader, adversary, device, \
             output = model(advdata)
         pred = output.max(1, keepdim=True)[1]
         vanilla_adv_acc += pred.eq(target.view_as(pred)).sum()
+        
+        # print(torch.max(torch.norm((advdata-data).view(data.shape[0], -1), p=2, dim=1)))
         
         # Mask those survived vanilla adversary
         mask = pred.eq(target.view_as(pred)).view(-1).nonzero().view(-1)
@@ -288,6 +309,7 @@ def evaluate_all(model, loader, adversary, device, \
                         with torch.no_grad():
                             output3 = model(advdata)
                         pred3 = output3.max(1, keepdim=True)[1]
+                        # print(torch.max(torch.norm((advdata-masked_data_3).view(masked_data_3.shape[0], -1), p=2, dim=1)))
                         
                         second_zero_nondiff_acc += (pred12 & pred3.eq(masked_target_3.view_as(pred3))).sum()
                         
@@ -312,26 +334,26 @@ def evaluate_all(model, loader, adversary, device, \
                   .format(second_zero_nondiff_acc, num_data, 100.*float(second_zero_nondiff_acc)/num_data))
     return
 
-def get_adversary(model, attack_type, eps, nb_iter=1, eps_iter=1., nb_random_start=1.):
+def get_adversary(model, attack_type, eps, nb_iter=1, eps_iter=1., nb_random_start=1., clip_min=0., clip_max=1.):
     if attack_type == 'pgd':
         adversary = LinfPGDAttack(model, loss_fn=nn.CrossEntropyLoss(reduction='sum'), eps=eps, nb_iter=nb_iter,\
-                                  eps_iter=eps_iter, rand_init=True, clip_min=0.0, clip_max=1.0)
+                                  eps_iter=eps_iter, rand_init=True, clip_min=clip_min, clip_max=clip_max)
         iterative = True
     elif attack_type == 'l2pgd':
         adversary = L2PGDAttack(model, loss_fn=nn.CrossEntropyLoss(reduction='sum'), eps=eps, nb_iter=nb_iter, \
-                                eps_iter=eps_iter, rand_init=True, clip_min=0.0, clip_max=1.0)
+                                eps_iter=eps_iter, rand_init=True, clip_min=clip_min, clip_max=clip_max)
         iterative = True
     elif attack_type == 'fgsm':
-        adversary = FGSM(model, loss_fn=nn.CrossEntropyLoss(reduction='sum'), eps=eps, clip_min=0.0, clip_max=1.0)
+        adversary = FGSM(model, loss_fn=nn.CrossEntropyLoss(reduction='sum'), eps=eps, clip_min=clip_min, clip_max=clip_max)
         iterative = False
     elif attack_type == 'fgm':
-        adversary = FGM(model, loss_fn=nn.CrossEntropyLoss(reduction='sum'), eps=eps, clip_min=0.0, clip_max=1.0)
+        adversary = FGM(model, loss_fn=nn.CrossEntropyLoss(reduction='sum'), eps=eps, clip_min=clip_min, clip_max=clip_max)
         iterative = False
     elif attack_type == 'rfgsm':
-        adversary = RFGSM(model, loss_fn=nn.CrossEntropyLoss(reduction='sum'), eps=eps, clip_min=0.0, clip_max=1.0)
+        adversary = RFGSM(model, loss_fn=nn.CrossEntropyLoss(reduction='sum'), eps=eps, clip_min=clip_min, clip_max=clip_max)
         iterative = False
     elif attack_type == 'rfgm':
-        adversary = RFGM(model, loss_fn=nn.CrossEntropyLoss(reduction='sum'), eps=eps, clip_min=0.0, clip_max=1.0)
+        adversary = RFGM(model, loss_fn=nn.CrossEntropyLoss(reduction='sum'), eps=eps, clip_min=clip_min, clip_max=clip_max)
         iterative = False
     else:
         raise TypeError('Not supported adversary type')

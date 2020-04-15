@@ -8,10 +8,12 @@ import torch
 
 import sys
 sys.path.insert(0, './advertorch')
+sys.path.insert(0, './compensated_attacks')
 
 from advertorch.utils import batch_multiply
 from advertorch.utils import clamp
 from advertorch.utils import normalize_by_pnorm
+from advertorch.utils import clamp_by_pnorm
 
 from advertorch.attacks.base import Attack
 from advertorch.attacks.base import LabelMixin
@@ -19,6 +21,8 @@ from advertorch.attacks.base import LabelMixin
 # Baseline attacks implemented at advertorch
 from advertorch.attacks import FGSM as FGSM_base
 from advertorch.attacks import FGM  as FGM_base
+
+from utils import *
 
 # R-FGSM and R-FGM implemented using basic attack class and operations provided by AdverTorch
 # FGSM and FGM modified for logit rescaling option
@@ -41,8 +45,16 @@ class RandomGradientSignAttack(Attack, LabelMixin):
         x, y = self._verify_and_process_inputs(x, y)
         delta = torch.randn(x.size(), device=x.device).sign()
         delta = nn.Parameter(delta)
-        delta.data = batch_multiply(self.eps/2, delta.data)
-        delta.data = clamp(x.data+delta.data, min=self.clip_min, max=self.clip_max) - x
+        
+        if isinstance(self.eps, float):
+            delta.data = batch_multiply(self.eps/2, delta.data)
+        else:
+            delta.data = channel_eps_multiply(delta.data, self.eps, scale=0.5)
+            
+        if isinstance(self.clip_min, float):
+            delta.data = clamp(x.data+delta.data, min=self.clip_min, max=self.clip_max) - x.data
+        else:
+            delta.data = channel_clip(x.data+delta.data, self.clip_min, self.clip_max) - x.data
         delta = delta.requires_grad_()
 
         #xadv = x.requires_grad_()
@@ -58,8 +70,16 @@ class RandomGradientSignAttack(Attack, LabelMixin):
             loss = -loss
         loss.backward()
         grad_sign = delta.grad.detach().sign()
-        delta.data = delta.data + batch_multiply(self.eps/2, grad_sign)
-        delta.data = clamp(x.data+delta.data, self.clip_min, self.clip_max) - x.data
+        
+        if isinstance(self.eps, float):
+            delta.data = delta.data + batch_multiply(self.eps/2, grad_sign)
+        else:
+            delta.data = channel_eps_multiply(grad_sign, self.eps, scale=0.5) + delta.data
+            
+        if isinstance(self.clip_min, float):
+            delta.data = clamp(x.data+delta.data, self.clip_min, self.clip_max) - x.data
+        else:
+            delta.data = channel_clip(x.data+delta.data, self.clip_min, self.clip_max) - x.data
 
         #xadv = xadv + self.eps * grad_sign
         #xadv = clamp(xadv, self.clip_min, self.clip_max)
@@ -90,10 +110,17 @@ class GradientSignAttack(FGSM_base):
             loss = -loss
         loss.backward()
         grad_sign = xadv.grad.detach().sign()
-
-        xadv = xadv + self.eps * grad_sign
-
-        xadv = clamp(xadv, self.clip_min, self.clip_max)
+        # print(torch.max(grad_sign), torch.min(grad_sign))
+        
+        if isinstance(self.eps, float):
+            xadv = xadv + self.eps * grad_sign
+        else:
+            xadv = xadv + channel_eps_multiply(grad_sign, self.eps)
+            
+        if isinstance(self.clip_min, float):
+            xadv = clamp(xadv, self.clip_min, self.clip_max)
+        else:
+            xadv = channel_clip(xadv, self.clip_min, self.clip_max)
 
         return xadv
 
@@ -103,6 +130,8 @@ FGSM = GradientSignAttack
 class GradientAttack(FGM_base):
     
     def __init__(self, predict, loss_fn=None, eps=0.3, clip_min=0., clip_max=1., targeted=False):
+        if not isinstance(eps, float):
+            eps = (eps[0] + eps[1] + eps[2]) / 3.
         super(GradientAttack, self).__init__(predict, loss_fn, eps, clip_min, clip_max, targeted)
         
     def perturb(self, x, y=None, temperature_softmax=False, temperature_softmax_value=None):
@@ -120,8 +149,21 @@ class GradientAttack(FGM_base):
             loss = -loss
         loss.backward()
         grad = normalize_by_pnorm(xadv.grad)
-        xadv = xadv + self.eps * grad
-        xadv = clamp(xadv, self.clip_min, self.clip_max)
+        delta = self.eps * grad
+        # xadv = xadv + self.eps * grad
+        
+        if isinstance(self.clip_min, float):
+            delta = clamp(xadv + delta, self.clip_min, self.clip_max) - xadv
+        else:
+            delta = channel_clip(xadv + delta, self.clip_min, self.clip_max) - xadv
+            
+        ### Update April 15
+        ### Numerical instability problem when using Lp_norm pooling (for BPDA) 
+        ### with large p (e.g. p >10), that results in overflow
+        ### leading to misleading result as eps * NaN will effectively set xadv to be NaN
+        delta.data = clamp_by_pnorm(delta.data, 2, self.eps)
+        
+        xadv = xadv + delta
 
         return xadv
 
@@ -135,6 +177,9 @@ class RandomGradientAttack(Attack, LabelMixin):
         
         super(RandomGradientAttack, self).__init__(
             predict, loss_fn, clip_min, clip_max)
+        
+        if not isinstance(eps, float):
+            eps = (eps[0] + eps[1] + eps[2]) / 3.
 
         self.eps = eps
         self.targeted = targeted
@@ -147,7 +192,11 @@ class RandomGradientAttack(Attack, LabelMixin):
         delta = normalize_by_pnorm(delta)
         delta = nn.Parameter(delta)
         delta.data = batch_multiply(self.eps/2, delta.data)
-        delta.data = clamp(x.data+delta.data, min=self.clip_min, max=self.clip_max) - x
+        
+        if isinstance(self.clip_min, float):
+            delta.data = clamp(x.data+delta.data, min=self.clip_min, max=self.clip_max) - x.data
+        else:
+            delta.data = channel_clip(x.data+delta.data, self.clip_min, self.clip_max) - x.data
         delta = delta.requires_grad_()
 
         #xadv = x.requires_grad_()
@@ -165,7 +214,14 @@ class RandomGradientAttack(Attack, LabelMixin):
         #grad_sign = delta.grad.detach().sign()
         grad = normalize_by_pnorm(delta.grad)
         delta.data = delta.data + batch_multiply(self.eps/2, grad)
-        delta.data = clamp(x.data+delta.data, self.clip_min, self.clip_max) - x.data
+        
+        if isinstance(self.clip_min, float):
+            delta.data = clamp(x.data+delta.data, self.clip_min, self.clip_max) - x.data
+        else:
+            delta.data = channel_clip(x.data+delta.data, self.clip_min, self.clip_max) - x.data
+            
+        delta.data = clamp_by_pnorm(delta.data, 2, self.eps)
+        
         xadv = x + delta
 
         return xadv
