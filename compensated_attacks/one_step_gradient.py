@@ -161,6 +161,13 @@ class GradientAttack(FGM_base):
         ### Numerical instability problem when using Lp_norm pooling (for BPDA) 
         ### with large p (e.g. p >10), that results in overflow
         ### leading to misleading result as eps * NaN will effectively set xadv to be NaN
+        ### if there was NaN in delta.data, then due to clipping operation
+        ### the value will saturate to clip_min or clip_max, resulting in larger than epsilon distortion
+        ### following line will cap the distortion size to epsilon again 
+        ### however, note that this will result in a uniform noise that is not effective as adversarial attack
+        ### SO IT IS IMPORTANT TO KEEP NUMERICAL STABILITY WHEN USING LPPOOL FOR BPDA
+        ### (especially when using large complex dataset & model such as those for places365 or full-scale imagenet)
+        ### (otherwise it will ruin the adversarial example, no effective!)
         delta.data = clamp_by_pnorm(delta.data, 2, self.eps)
         
         xadv = xadv + delta

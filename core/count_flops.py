@@ -12,15 +12,19 @@ def print_model_param_nums(model=None):
     if model == None:
         model = torchvision.models.alexnet()
     total = sum([param.nelement() if param.requires_grad else 0 for param in model.parameters()])
+#     total = 0
     #print(total)
     for m in model.modules():
         if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+#             total += m.weight.data.nelement()
+#             if m.bias is not None:
+#                 total += m.bias.data.nelement()
             total -= (m.weight.data == 0).sum()
     #print(total)
     print('  + Number of params: {}'.format(total))
     return total
 
-def count_model_param_flops(model=None, input_res=224, multiply_adds=True):
+def count_model_param_flops(model=None, input_res=224, multiply_adds=True, multiplication_only=False, ignore_bn=False):
 
     prods = {}
     def save_hook(name):
@@ -49,7 +53,7 @@ def count_model_param_flops(model=None, input_res=224, multiply_adds=True):
 
         num_weight_params = (self.weight.data != 0).float().sum()
         assert self.weight.numel() == kernel_ops * output_channels, "Not match"
-        flops = (num_weight_params * (2 if multiply_adds else 1) + bias_ops * output_channels) * output_height * output_width * batch_size
+        flops = (num_weight_params * (2 if multiply_adds else 1) + bias_ops * output_channels) * output_height * output_width * batch_size if not multiplication_only else output_channels * kernel_ops * output_height * output_width * batch_size
 
         list_conv.append(flops)
 
@@ -60,7 +64,7 @@ def count_model_param_flops(model=None, input_res=224, multiply_adds=True):
         weight_ops = self.weight.nelement() * (2 if multiply_adds else 1)
         bias_ops = self.bias.nelement()
 
-        flops = batch_size * (weight_ops + bias_ops)
+        flops = batch_size * (weight_ops + bias_ops) if not multiplication_only else batch_size * weight_ops
         list_linear.append(flops)
 
     list_bn=[]
@@ -117,7 +121,7 @@ def count_model_param_flops(model=None, input_res=224, multiply_adds=True):
     input = Variable(torch.rand(3,input_res,input_res).unsqueeze(0), requires_grad = True)
     out = model(input)
 
-    total_flops = (sum(list_conv) + sum(list_linear) + sum(list_bn) + sum(list_relu) + sum(list_pooling) + sum(list_upsample))
+    total_flops = (sum(list_conv) + sum(list_linear) + sum(list_bn) + sum(list_relu) + sum(list_pooling) + sum(list_upsample)) if not ignore_bn else (sum(list_conv) + sum(list_linear))
 
     print('  + Number of FLOPs: %.6fG' % (1. * total_flops / 1e9))
 
