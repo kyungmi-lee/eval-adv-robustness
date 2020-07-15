@@ -44,10 +44,11 @@ class Block(nn.Module):
             )
 
         self.spectral_norm = spectral_norm
+        self.relu = nn.ReLU()
 
     def forward(self, x):
-        out = F.relu(self.conv1(x)) if self.spectral_norm else F.relu(self.bn1(self.conv1(x)))
-        out = F.relu(self.conv2(out)) if self.spectral_norm else  F.relu(self.bn2(self.conv2(out)))
+        out = self.relu(self.conv1(x)) if self.spectral_norm else self.relu(self.bn1(self.conv1(x)))
+        out = self.relu(self.conv2(out)) if self.spectral_norm else  self.relu(self.bn2(self.conv2(out)))
         out = self.conv3(out) if self.spectral_norm else self.bn3(self.conv3(out))
         out = out + self.shortcut(x) if self.stride==1 else out
         return out
@@ -79,6 +80,7 @@ class MobileNetV2(nn.Module):
             self.bn2 = nn.BatchNorm2d(int(1280*width_mult))
         self.linear = nn.Linear(int(1280*width_mult), num_classes)
         self.spectral_norm = spectral_norm
+        self.relu = nn.ReLU()
 
     def _make_layers(self, in_planes, width_mult, spectral_norm):
         layers = []
@@ -90,9 +92,9 @@ class MobileNetV2(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        out = F.relu(self.conv1(x)) if self.spectral_norm else F.relu(self.bn1(self.conv1(x)))
+        out = self.relu(self.conv1(x)) if self.spectral_norm else self.relu(self.bn1(self.conv1(x)))
         out = self.layers(out)
-        out = F.relu(self.conv2(out)) if self.spectral_norm else F.relu(self.bn2(self.conv2(out)))
+        out = self.relu(self.conv2(out)) if self.spectral_norm else self.relu(self.bn2(self.conv2(out)))
         # NOTE: change pooling kernel_size 7 -> 4 for CIFAR10
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
